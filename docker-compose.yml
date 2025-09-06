@@ -1,0 +1,19 @@
+# me fui a neon
+
+# version: '3.9'
+# services:
+#   db:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_USER: xcg
+#       POSTGRES_PASSWORD: xcg
+#       POSTGRES_DB: xcg
+#     ports:
+#       - '55432:5432'
+#     volumes:
+#       - ./.data/pg:/var/lib/postgresql/data
+#     healthcheck:
+#       test: ['CMD-SHELL', 'pg_isready -U xcg -d xcg']
+#       interval: 3s
+#       timeout: 3s
+#       retries: 10

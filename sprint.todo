@@ -1,0 +1,37 @@
+Plan de acción (Sprint 1)
+
+Elige storage: SQLite en ./.data/xcg.db.
+
+Añade migraciones desde el día 1 (así luego cambias a Postgres sin dolor).
+
+Ignora el archivo en git (.gitignore).
+
+Define el esquema (conceptual): tabla user_links con los campos de arriba y constraints:
+
+PK en faceit_user_id.
+
+UNIQUE en discord_user_id.
+
+Índice en guild_id si lo usas.
+
+Flujo /link:
+
+Slash → URL de autorización (con state que incluye discord_id).
+
+Callback → intercambias code → obtienes user_id y nickname.
+
+Validas membresía del hub → upsert en user_links (is_member=true/false).
+
+Respondes en Discord y, si quieres, asignas un rol “Linked”.
+
+/whoami:
+
+Lee user_links y muestra identidad cruzada y estado de membresía.
+
+(Opcional) Hacer un “refresh” de ELO/Nivel para UX.
+
+Webhooks de membresía:
+
+Suscribe hub_user_added/removed.
+
+Al recibirlos, actualiza is_member en user_links.
