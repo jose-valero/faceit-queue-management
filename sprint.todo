@@ -35,3 +35,35 @@ Webhooks de membresía:
 Suscribe hub_user_added/removed.
 
 Al recibirlos, actualiza is_member en user_links.
+
+- Sprint 2 — Waiting room (una cola)
+
+/join-queue, /leave, /ready, /launch
+
+Reglas: linked + miembro + no busy + (voz si aplica)
+
+Temporizadores AFK (voz) y auto-salida
+
+Log “ventana” para sincronizar el click en FACEIT
+
+- Sprint 3 — Webhooks + estado
+
+Listener + verificación de secreto
+
+Dispatcher y workers por match
+
+Transiciones de estado + busy_players
+
+- Sprint 4 — Post-match + preview
+
+Stats + embed a Discord
+
+Categorías/voz por match (crear/mover/limpiar)
+
+Vista/preview de partidas en curso
+
+- Sprint 5 — Multi-cola y robustez
+
+Namespaces por cola (por canal o por comando)
+
+Cache de hub_members, backoff 429, métricas y logs

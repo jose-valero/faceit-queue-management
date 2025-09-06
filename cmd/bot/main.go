@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
@@ -37,19 +38,24 @@ func main() {
 		log.Fatal("migrate:", err)
 	}
 	log.Println("✅ DB lista y migrada")
-	users := storage.NewUserRepo(db)
 
-	// HTTP webhook (puede quedar prendido; si FACEIT no envía, no pasa nada)
-	web := httpfaceit.New(cfg.WebhookSecret, users)
+	usersRepo := storage.NewUserRepo(db)
+	queueRepo := storage.NewQueueRepo(db)
+	policyRepo := storage.NewPolicyRepo(db)
+
+	// Webhook FACEIT
+	web := httpfaceit.New(cfg.WebhookSecret, usersRepo)
 	go web.Start(cfg.HTTPAddr)
 
 	// FACEIT client
 	fc := faceit.New(cfg.FaceitAPIKey)
 
-	// Servicio de negocio
-	svc := service.NewLinkService(fc, users, cfg.FaceitHubID)
+	// Services
+	linkSvc := service.NewLinkService(fc, usersRepo, cfg.FaceitHubID)
+	queueSvc := service.NewQueueService(usersRepo, queueRepo, policyRepo)
+	policySvc := service.NewPolicyService(policyRepo)
 
-	// Discord
+	// Discord session
 	auth := cfg.DiscordToken
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(auth)), "bot ") {
 		auth = "Bot " + strings.TrimSpace(auth)
@@ -58,27 +64,51 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s.Identify.Intents = discordgo.IntentsGuilds
+	s.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildVoiceStates
+
 	if err := s.Open(); err != nil {
 		log.Fatal(err)
 	}
 	defer s.Close()
 	log.Printf("✅ Conectado como %s (%s)", s.State.User.Username, s.State.User.ID)
 
-	// Router (métodos del servicio)
+	// Router
 	r := discordrouter.NewRouter(
 		s,
 		cfg.DiscordGuild,
-		svc.Link,
-		svc.WhoAmI,
-		svc.DescribeByNick,
-		svc.Unlink,
+		discordrouter.VoiceCfg{
+			AllowedCategoryID: cfg.VoiceCategoryID,
+			AFKChannelID:      cfg.AFKChannelID,
+		},
+		linkSvc,
+		queueSvc,
+		policySvc,
 	)
 	if err := r.Register(); err != nil {
 		log.Fatalf("registrando comandos: %v", err)
 	}
 	r.Handlers()
 	log.Printf("🔧 comandos registrados en guild %s", cfg.DiscordGuild)
+
+	// Pruner (gracias AFK/LEFT)
+	go func() {
+		t := time.NewTicker(1 * time.Minute)
+		defer t.Stop()
+		for range t.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			pol, err := policyRepo.Get(ctx, cfg.DiscordGuild)
+			cancel()
+			if err != nil {
+				continue
+			}
+			afk := time.Duration(pol.AFKTimeoutSeconds) * time.Second
+			left := time.Duration(pol.DropIfLeftMinutes) * time.Minute
+			if afk <= 0 && left <= 0 {
+				continue
+			}
+			_, _, _ = queueSvc.Prune(context.Background(), cfg.DiscordGuild, afk, left)
+		}
+	}()
 
 	// Esperar señal
 	stop := make(chan os.Signal, 1)
