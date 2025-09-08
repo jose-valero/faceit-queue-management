@@ -79,13 +79,13 @@ func (c *Client) GetMatch(ctx context.Context, matchID string) (*matchDTO, error
 	return &dto, nil
 }
 
-func (c *Client) GetMatchStats(ctx context.Context, matchID string) (*matchStatsDTO, error) {
-	var dto matchStatsDTO
-	err := c.doJSON(ctx, "GET", fmt.Sprintf("/matches/%s/stats", matchID), nil, &dto)
+func (c *Client) GetMatchStats(ctx context.Context, matchID string) (*domain.MatchStats, error) {
+	var out domain.MatchStats
+	err := c.doJSON(ctx, "GET", fmt.Sprintf("/matches/%s/stats", matchID), nil, &out)
 	if err != nil {
 		return nil, err
 	}
-	return &dto, nil
+	return &out, nil
 }
 
 // PlayerInOngoingHub: revisa /hubs/{hubID}/matches?state=ongoing y busca al player en los rosters.

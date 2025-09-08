@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -34,6 +35,7 @@ type Router struct {
 	refreshMu    sync.Mutex
 	refreshTimer *time.Timer
 	adminRoleIDs []string
+	rooms        *service.MatchRoomsService
 }
 
 func NewRouter(
@@ -45,6 +47,7 @@ func NewRouter(
 	policy *service.PolicyService,
 	ui *storage.UIRepo,
 	adminRoleIDs []string,
+	rooms *service.MatchRoomsService,
 ) *Router {
 	return &Router{
 		s:            s,
@@ -55,6 +58,7 @@ func NewRouter(
 		policy:       policy,
 		uiStorage:    ui,
 		adminRoleIDs: adminRoleIDs,
+		rooms:        rooms,
 	}
 }
 
@@ -71,6 +75,29 @@ func (r *Router) Register() error {
 	return nil
 }
 
+var reMention = regexp.MustCompile(`<@!?(\d+)>`)
+
+func parseIDs(raw string) []string {
+	ids := []string{}
+	for _, tok := range strings.Fields(raw) {
+		if m := reMention.FindStringSubmatch(tok); len(m) == 2 {
+			ids = append(ids, m[1])
+			continue
+		}
+		// si son solo dígitos, lo tomamos como ID
+		allDigits := true
+		for _, r := range tok {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			ids = append(ids, tok)
+		}
+	}
+	return ids
+}
 func (r *Router) Handlers() {
 	// Slash commands
 	r.s.AddHandler(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
@@ -249,7 +276,63 @@ func (r *Router) Handlers() {
 				}
 				ReplyEphemeral(s, ic, "✅ UI publicada aquí. Usa los botones para unirte/salir.")
 
-			} // switch data.Name
+			case "roomsdemo":
+				if !r.requireAdminOrRoles(s, ic) {
+					ReplyEphemeral(s, ic, "Solo admins.")
+					return
+				}
+
+				var team1Raw, team2Raw, matchID, name1, name2 string
+				var cleanup bool
+				for _, opt := range cmd.Options {
+					switch opt.Name {
+					case "team1":
+						team1Raw = opt.StringValue()
+					case "team2":
+						team2Raw = opt.StringValue()
+					case "match":
+						matchID = opt.StringValue()
+					case "name1":
+						name1 = opt.StringValue()
+					case "name2":
+						name2 = opt.StringValue()
+					case "cleanup":
+						cleanup = opt.BoolValue()
+					}
+				}
+
+				if matchID == "" {
+					matchID = fmt.Sprintf("demo-%d", time.Now().UnixNano())
+				}
+
+				if cleanup {
+					if err := r.rooms.DebugCleanup(context.Background(), matchID); err != nil {
+						ReplyEphemeral(s, ic, "⚠️ Cleanup: "+err.Error())
+						return
+					}
+					ReplyEphemeral(s, ic, "🧹 Limpieza ok.")
+					return
+				}
+
+				team1 := parseIDs(team1Raw)
+				team2 := parseIDs(team2Raw)
+				if len(team1) == 0 && len(team2) == 0 {
+					ReplyEphemeral(s, ic, "Pasa menciones o IDs en team1/team2.")
+					return
+				}
+
+				if err := r.rooms.DebugEnsureRooms(context.Background(), matchID); err != nil {
+					ReplyEphemeral(s, ic, "⚠️ ensure: "+err.Error())
+					return
+				}
+				if err := r.rooms.DebugMoveDiscord(context.Background(), matchID, team1, team2, name1, name2); err != nil {
+					ReplyEphemeral(s, ic, "⚠️ move: "+err.Error())
+					return
+				}
+				ReplyEphemeral(s, ic, "✅ Listo. Match **"+matchID+"** creado y jugadores movidos si estaban en voz.")
+				return
+
+			}
 
 		case discordgo.InteractionMessageComponent:
 			// Click en botón
@@ -284,6 +367,95 @@ func (r *Router) Handlers() {
 				}
 				ReplyEphemeral(r.s, ic, msg)
 				go r.refreshQueueUI(ic.GuildID)
+
+			case "admin_panel":
+				// Chequeo de permisos (usa tu helper exist. requireAdminOrRoles)
+				if !r.requireAdminOrRoles(s, ic) {
+					return
+				}
+
+				// Ya hay un DeferEphemeral arriba de este handler. Construimos el selector efímero.
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				// Traemos hasta 25 usuarios de la cola (los primeros)
+				items, err := r.queue.ListRich(ctx, ic.GuildID, 25)
+				if err != nil {
+					ReplyEphemeral(s, ic, "⚠️ No pude listar la cola: "+err.Error())
+					return
+				}
+				if len(items) == 0 {
+					ReplyEphemeral(s, ic, "ℹ️ La cola está vacía.")
+					return
+				}
+
+				opts := make([]discordgo.SelectMenuOption, 0, len(items))
+				for i, it := range items {
+					label := fmt.Sprintf("%02d) %s", i+1, it.Nickname)
+					if len(label) > 100 {
+						label = label[:100]
+					}
+					desc := fmt.Sprintf("@%s · %s", it.DiscordUserID, it.Status)
+					if len(desc) > 100 {
+						desc = desc[:100]
+					}
+					opts = append(opts, discordgo.SelectMenuOption{
+						Label:       label,
+						Value:       "uid:" + it.DiscordUserID, // lo parseamos luego
+						Description: desc,
+					})
+				}
+
+				row := discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.SelectMenu{
+							CustomID:    "kick_select",
+							Placeholder: "Selecciona a quién kickear",
+							// MinValues:   1,
+							// MaxValues:   1,
+							Options: opts,
+						},
+					},
+				}
+
+				// Respondemos con un follow-up efímero que contiene el selector
+				_, err = s.FollowupMessageCreate(ic.Interaction, true, &discordgo.WebhookParams{
+					Content:    "Elige un jugador para **kickear**:",
+					Components: []discordgo.MessageComponent{row},
+				})
+				if err != nil {
+					ReplyEphemeral(s, ic, "⚠️ No pude mostrar el panel admin: "+err.Error())
+				}
+				return
+
+			case "kick_select":
+				// Sólo admins
+				if !r.requireAdminOrRoles(s, ic) {
+					return
+				}
+				data := ic.MessageComponentData()
+				if len(data.Values) == 0 {
+					ReplyEphemeral(s, ic, "⚠️ Selección inválida.")
+					return
+				}
+				uid := strings.TrimPrefix(data.Values[0], "uid:")
+
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				msg, err := r.queue.Leave(ctx, ic.GuildID, uid)
+				if err != nil {
+					ReplyEphemeral(s, ic, "⚠️ Error al kickear: "+err.Error())
+					return
+				}
+				if strings.Contains(msg, "No estabas") {
+					ReplyEphemeral(s, ic, "ℹ️ Ese jugador no estaba en la cola.")
+				} else {
+					ReplyEphemeral(s, ic, "✅ Jugador kickeado.")
+				}
+				go r.refreshQueueUI(ic.GuildID)
+				return
+
 			}
 		}
 	})
@@ -475,8 +647,24 @@ func (r *Router) renderQueueEmbed(ctx context.Context, guildID string) (*discord
 	}
 	comps := discordgo.ActionsRow{
 		Components: []discordgo.MessageComponent{
-			discordgo.Button{Style: discordgo.PrimaryButton, Label: "🟡 La llevo", CustomID: "queue_join"},
-			discordgo.Button{Style: discordgo.SecondaryButton, Label: "👋 Chau", CustomID: "queue_leave"},
+			discordgo.Button{
+				Style:    discordgo.PrimaryButton,
+				Label:    "La llevo",
+				CustomID: "queue_join",
+				Emoji:    &discordgo.ComponentEmoji{Name: "🌕"},
+			},
+			discordgo.Button{
+				Style:    discordgo.SecondaryButton,
+				Label:    "Chau",
+				CustomID: "queue_leave",
+				Emoji:    &discordgo.ComponentEmoji{Name: "👋"},
+			},
+			discordgo.Button{
+				Style:    discordgo.SecondaryButton,
+				Label:    "Admin",
+				CustomID: "admin_panel",
+				Emoji:    &discordgo.ComponentEmoji{Name: "👮"},
+			},
 		},
 	}
 	return embed, comps, nil
@@ -574,7 +762,7 @@ outer:
 		}
 	}
 
-	ReplyEphemeral(s, ic, "🔒 No tienes permisos para este comando.")
+	ReplyEphemeral(s, ic, "🔒 No tienes permisos para esta acción.")
 	return false
 }
 

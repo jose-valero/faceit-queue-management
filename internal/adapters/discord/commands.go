@@ -71,4 +71,17 @@ var Commands = []*discordgo.ApplicationCommand{
 			},
 		},
 	},
+	{
+		Name:                     "roomsdemo",
+		Description:              "(Admin) Crea salas demo y mueve usuarios",
+		DefaultMemberPermissions: &adminPerms,
+		Options: []*discordgo.ApplicationCommandOption{
+			{Type: discordgo.ApplicationCommandOptionString, Name: "team1", Description: "Menciones o IDs separados por espacio", Required: true},
+			{Type: discordgo.ApplicationCommandOptionString, Name: "team2", Description: "Menciones o IDs separados por espacio", Required: true},
+			{Type: discordgo.ApplicationCommandOptionString, Name: "match", Description: "Match ID (opcional)"},
+			{Type: discordgo.ApplicationCommandOptionString, Name: "name1", Description: "Nombre canal 1 (opcional)"},
+			{Type: discordgo.ApplicationCommandOptionString, Name: "name2", Description: "Nombre canal 2 (opcional)"},
+			{Type: discordgo.ApplicationCommandOptionBoolean, Name: "cleanup", Description: "Borra las salas del match"},
+		},
+	},
 }

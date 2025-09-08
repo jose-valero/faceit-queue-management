@@ -1,3 +1,4 @@
+// cmd/xcg-bot/main.go (fragmento completo y ordenado)
 package main
 
 import (
@@ -39,24 +40,17 @@ func main() {
 	}
 	log.Println("✅ DB lista y migrada")
 
+	// Repos
 	usersRepo := storage.NewUserRepo(db)
 	queueRepo := storage.NewQueueRepo(db)
 	policyRepo := storage.NewPolicyRepo(db)
 	uiRepo := storage.NewUIRepo(db)
+	roomsRepo := storage.NewMatchRoomsRepo(db)
 
-	// Webhook FACEIT
-	web := httpfaceit.New(cfg.WebhookSecret, usersRepo)
-	go web.Start(cfg.HTTPAddr)
-
-	// FACEIT client
+	// FACEIT client (antes de services que lo usan)
 	fc := faceit.New(cfg.FaceitAPIKey)
 
-	// Services
-	linkSvc := service.NewLinkService(fc, usersRepo, cfg.FaceitHubID)
-	queueSvc := service.NewQueueService(fc, usersRepo, queueRepo, policyRepo, cfg.FaceitHubID)
-	policySvc := service.NewPolicyService(policyRepo)
-
-	// Discord session
+	// Discord session (antes del roomsSvc, que la necesita)
 	auth := cfg.DiscordToken
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(auth)), "bot ") {
 		auth = "Bot " + strings.TrimSpace(auth)
@@ -66,12 +60,25 @@ func main() {
 		log.Fatal(err)
 	}
 	s.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildVoiceStates
-
 	if err := s.Open(); err != nil {
 		log.Fatal(err)
 	}
 	defer s.Close()
 	log.Printf("✅ Conectado como %s (%s)", s.State.User.Username, s.State.User.ID)
+
+	// Services
+	linkSvc := service.NewLinkService(fc, usersRepo, cfg.FaceitHubID)
+	queueSvc := service.NewQueueService(fc, usersRepo, queueRepo, policyRepo, cfg.FaceitHubID)
+	policySvc := service.NewPolicyService(policyRepo)
+
+	// Rooms service (ya tenemos s y fc)
+	roomsSvc := service.NewMatchRoomsService(s, fc, usersRepo, roomsRepo, cfg.DiscordGuild, "XCG Faceit Match")
+
+	// Webhook FACEIT (callback opcional)
+	web := httpfaceit.New(cfg.WebhookSecret, usersRepo, func(ctx context.Context, matchID, status string) {
+		roomsSvc.HandleMatchEvent(ctx, matchID, status)
+	})
+	go web.Start(cfg.HTTPAddr)
 
 	// Router
 	r := discordrouter.NewRouter(
@@ -86,6 +93,7 @@ func main() {
 		policySvc,
 		uiRepo,
 		cfg.AdminRoleIDs,
+		roomsSvc,
 	)
 	if err := r.Register(); err != nil {
 		log.Fatalf("registrando comandos: %v", err)
@@ -93,9 +101,9 @@ func main() {
 	r.Handlers()
 	log.Printf("✅ comandos registrados en guild %s", cfg.DiscordGuild)
 
-	// Pruner (gracias AFK/LEFT)
+	// Pruner (gracias AFK/LEFT) — ya usás segundos
 	go func() {
-		t := time.NewTicker(5 * time.Second) // antes 1m
+		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
 		for range t.C {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -107,14 +115,12 @@ func main() {
 
 			afk := time.Duration(pol.AFKTimeoutSeconds) * time.Second
 			left := time.Duration(pol.DropIfLeftSeconds) * time.Second
-
 			if afk <= 0 && left <= 0 {
 				continue
 			}
-			_, _, _ = queueSvc.Prune(context.Background(), cfg.DiscordGuild, afk, left)
 
-			// opcional: pedir un refresh “barato” si algo cambió (puedes omitir si ya refrescas en eventos)
-			// r.RefreshIfVisible(cfg.DiscordGuild)
+			_, _, _ = queueSvc.Prune(context.Background(), cfg.DiscordGuild, afk, left)
+			// opcional: r.RefreshIfVisible(cfg.DiscordGuild)
 		}
 	}()
 

@@ -60,13 +60,11 @@ type matchDTO struct {
 type matchStatsDTO struct {
 	Rounds []struct {
 		Teams []struct {
-			Players []struct {
-				PlayerID  string `json:"player_id"`
-				Nickname  string `json:"nickname"`
-				Kills     int    `json:"kills"`
-				Deaths    int    `json:"deaths"`
-				Headshots int    `json:"headshots"`
-				// agrega ADR, etc. cuando lo uses
+			Team     string `json:"team"`     // ej: "faction1" / "faction2" o "CT"/"T" (depende)
+			Nickname string `json:"nickname"` // nombre del equipo si está disponible
+			Players  []struct {
+				PlayerID string `json:"player_id"`
+				Nickname string `json:"nickname"`
 			} `json:"players"`
 		} `json:"teams"`
 	} `json:"rounds"`

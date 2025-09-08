@@ -22,6 +22,7 @@ type UserRepo interface {
 	GetByDiscordID(ctx context.Context, discordID string) (storage.UserLink, error)
 	UpsertLink(ctx context.Context, ul storage.UserLink) error
 	SoftDeleteByDiscordID(ctx context.Context, discordID, guildID string) (bool, error)
+	FindDiscordByFaceitIDs(ctx context.Context, ids []string) (map[string]string, error)
 }
 
 // Implementado por internal/infra/storage.QueueRepo
