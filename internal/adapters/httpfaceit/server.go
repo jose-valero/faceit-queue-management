@@ -26,6 +26,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/faceit/webhook", s.handleWebhook)
 }
 
+// sin uso por ahora
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

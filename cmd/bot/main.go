@@ -42,6 +42,7 @@ func main() {
 	usersRepo := storage.NewUserRepo(db)
 	queueRepo := storage.NewQueueRepo(db)
 	policyRepo := storage.NewPolicyRepo(db)
+	uiRepo := storage.NewUIRepo(db)
 
 	// Webhook FACEIT
 	web := httpfaceit.New(cfg.WebhookSecret, usersRepo)
@@ -52,7 +53,7 @@ func main() {
 
 	// Services
 	linkSvc := service.NewLinkService(fc, usersRepo, cfg.FaceitHubID)
-	queueSvc := service.NewQueueService(usersRepo, queueRepo, policyRepo)
+	queueSvc := service.NewQueueService(fc, usersRepo, queueRepo, policyRepo, cfg.FaceitHubID)
 	policySvc := service.NewPolicyService(policyRepo)
 
 	// Discord session
@@ -83,30 +84,37 @@ func main() {
 		linkSvc,
 		queueSvc,
 		policySvc,
+		uiRepo,
+		cfg.AdminRoleIDs,
 	)
 	if err := r.Register(); err != nil {
 		log.Fatalf("registrando comandos: %v", err)
 	}
 	r.Handlers()
-	log.Printf("🔧 comandos registrados en guild %s", cfg.DiscordGuild)
+	log.Printf("✅ comandos registrados en guild %s", cfg.DiscordGuild)
 
 	// Pruner (gracias AFK/LEFT)
 	go func() {
-		t := time.NewTicker(1 * time.Minute)
+		t := time.NewTicker(5 * time.Second) // antes 1m
 		defer t.Stop()
 		for range t.C {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			pol, err := policyRepo.Get(ctx, cfg.DiscordGuild)
 			cancel()
 			if err != nil {
 				continue
 			}
+
 			afk := time.Duration(pol.AFKTimeoutSeconds) * time.Second
-			left := time.Duration(pol.DropIfLeftMinutes) * time.Minute
+			left := time.Duration(pol.DropIfLeftSeconds) * time.Second
+
 			if afk <= 0 && left <= 0 {
 				continue
 			}
 			_, _, _ = queueSvc.Prune(context.Background(), cfg.DiscordGuild, afk, left)
+
+			// opcional: pedir un refresh “barato” si algo cambió (puedes omitir si ya refrescas en eventos)
+			// r.RefreshIfVisible(cfg.DiscordGuild)
 		}
 	}()
 

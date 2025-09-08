@@ -12,6 +12,9 @@ import (
 type FaceitAPI interface {
 	GetPlayerByNickname(ctx context.Context, nick, game string) (*domain.Player, error)
 	IsMemberOfHub(ctx context.Context, playerID, hubID string) (bool, error)
+
+	PlayerInOngoingHub(ctx context.Context, playerID, hubID string) (bool, error)
+	LastMatchLossWithin(ctx context.Context, playerID, game string, within time.Duration) (bool, time.Time, error)
 }
 
 // Implementado por internal/infra/storage.UserRepo
@@ -30,6 +33,8 @@ type QueueRepo interface {
 	TouchValid(ctx context.Context, guildID, discordID string) error
 	MarkLeft(ctx context.Context, guildID, discordID string) error
 	MarkAFK(ctx context.Context, guildID, discordID string) error
+
+	Exists(ctx context.Context, guildID, discordID string) (bool, error)
 
 	// Prune con “tiempos de gracia” para AFK/LEFT
 	Prune(ctx context.Context, guildID string, afkTimeout, leftTimeout time.Duration) (int64, int64, error)

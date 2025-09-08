@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jose-valero/faceit-queue-bot/internal/domain"
 )
@@ -86,4 +88,67 @@ func (c *Client) GetMatchStats(ctx context.Context, matchID string) (*matchStats
 	return &dto, nil
 }
 
-// Si tu puerto domain.FaceitAPI aún no define estos, podés agregarlos luego.
+// PlayerInOngoingHub: revisa /hubs/{hubID}/matches?state=ongoing y busca al player en los rosters.
+func (c *Client) PlayerInOngoingHub(ctx context.Context, playerID, hubID string) (bool, error) {
+	offset := 0
+	limit := 50
+	for {
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(limit))
+		q.Set("offset", strconv.Itoa(offset))
+		// FACEIT usa "status" o "state" según recurso; probamos con "state=ongoing".
+		// Si tu endpoint requiere "status", cambia la clave.
+		q.Set("state", "ongoing")
+
+		var dto hubMatchListDTO
+		if err := c.doJSON(ctx, "GET", fmt.Sprintf("/hubs/%s/matches", hubID), q, &dto); err != nil {
+			return false, err
+		}
+		if len(dto.Items) == 0 {
+			return false, nil
+		}
+		for _, m := range dto.Items {
+			for _, t := range m.Teams {
+				for _, p := range t.Players {
+					if p.UserID == playerID {
+						return true, nil
+					}
+				}
+			}
+		}
+		if len(dto.Items) < limit {
+			return false, nil
+		}
+		offset += limit
+	}
+}
+
+// LastMatchLossWithin: mira el último match del player y si fue derrota dentro de 'within', devuelve true y el "finished_at".
+func (c *Client) LastMatchLossWithin(ctx context.Context, playerID, game string, within time.Duration) (bool, time.Time, error) {
+	q := url.Values{}
+	q.Set("game", game)
+	q.Set("limit", "1")
+
+	var dto playerHistoryDTO
+	if err := c.doJSON(ctx, "GET", fmt.Sprintf("/players/%s/history", playerID), q, &dto); err != nil {
+		return false, time.Time{}, err
+	}
+	if len(dto.Items) == 0 {
+		return false, time.Time{}, nil
+	}
+	it := dto.Items[0]
+
+	// ⚠️ Algunas respuestas vienen en milisegundos. Si notas que el tiempo es enorme, divide por 1000.
+	ended := time.Unix(it.FinishedAt, 0)
+	// Heurística de resultado
+	res := strings.ToLower(strings.TrimSpace(it.Result))
+	lost := res == "lose" || res == "lost" || res == "defeat" || res == "defeated"
+
+	if !lost {
+		return false, time.Time{}, nil
+	}
+	if time.Since(ended) < within {
+		return true, ended, nil
+	}
+	return false, time.Time{}, nil
+}

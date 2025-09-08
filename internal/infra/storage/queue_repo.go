@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -99,7 +100,7 @@ func (r *QueueRepo) Prune(ctx context.Context, guildID string, afk, left time.Du
 DELETE FROM queue_entries
  WHERE guild_id = $1
    AND status   = 'afk'
-   AND last_seen_at < now() - $2::interval
+   AND last_seen_at <= now() - $2::interval
 `, guildID, durToInterval(afk))
 		if err != nil {
 			return 0, 0, err
@@ -113,7 +114,7 @@ DELETE FROM queue_entries
 DELETE FROM queue_entries
  WHERE guild_id = $1
    AND status   = 'left'
-   AND last_seen_at < now() - $2::interval
+   AND last_seen_at <= now() - $2::interval
 `, guildID, durToInterval(left))
 		if err != nil {
 			return nAfk, 0, err
@@ -125,23 +126,34 @@ DELETE FROM queue_entries
 	return nAfk, nLeft, nil
 }
 
-// ListWithGrace devuelve:
-// - siempre los 'waiting'
-// - los 'afk' cuya last_seen esté dentro de graceAFK (si graceAFK > 0) | esto no se si hacerlo
-// - los 'left' cuya last_seen esté dentro de graceLeft (si graceLeft > 0) | por ahora mostramos
+// ListWithGrace devuelve waiting + (afk dentro de graceAFK) + (left dentro de graceLeft)
 func (r *QueueRepo) ListWithGrace(ctx context.Context, guildID string, limit int, graceAFK, graceLeft time.Duration) ([]QueueEntry, error) {
+	conds := []string{"status = 'waiting'"} // siempre mostramos waiting
+
+	args := []any{guildID}
+	i := 2
+
+	if graceAFK > 0 {
+		conds = append(conds, fmt.Sprintf("(status = 'afk'  AND last_seen_at > now() - $%d::interval)", i))
+		args = append(args, durToInterval(graceAFK))
+		i++
+	}
+	if graceLeft > 0 {
+		conds = append(conds, fmt.Sprintf("(status = 'left' AND last_seen_at > now() - $%d::interval)", i))
+		args = append(args, durToInterval(graceLeft))
+		i++
+	}
+	where := " AND (" + strings.Join(conds, " OR ") + ")"
+
+	args = append(args, limit)
+
 	rows, err := r.db.QueryContext(ctx, `
 SELECT guild_id, discord_user_id, faceit_user_id, nickname, joined_at, last_seen_at, status
   FROM queue_entries
  WHERE guild_id = $1
-   AND (
-         status = 'waiting'
-      OR ( $2::interval > '0 seconds'::interval AND status = 'afk'  AND last_seen_at > now() - $2::interval )
-      OR ( $3::interval > '0 seconds'::interval AND status = 'left' AND last_seen_at > now() - $3::interval )
-   )
+`+where+`
  ORDER BY joined_at ASC
- LIMIT $4
-`, guildID, durToInterval(graceAFK), durToInterval(graceLeft), limit)
+ LIMIT $`+fmt.Sprint(i), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +168,19 @@ SELECT guild_id, discord_user_id, faceit_user_id, nickname, joined_at, last_seen
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (r *QueueRepo) Exists(ctx context.Context, guildID, discordID string) (bool, error) {
+	var x int
+	err := r.db.QueryRowContext(ctx, `
+SELECT 1
+  FROM queue_entries
+ WHERE guild_id = $1 AND discord_user_id = $2
+`, guildID, discordID).Scan(&x)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func durToInterval(d time.Duration) string {

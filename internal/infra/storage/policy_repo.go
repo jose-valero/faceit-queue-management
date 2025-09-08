@@ -15,17 +15,16 @@ func NewPolicyRepo(db *sql.DB) *PolicyRepo { return &PolicyRepo{db: db} }
 func (r *PolicyRepo) Get(ctx context.Context, guildID string) (GuildPolicy, error) {
 	var p GuildPolicy
 	err := r.db.QueryRowContext(ctx, `
-SELECT guild_id, require_member, afk_timeout_seconds, drop_if_left_minutes, voice_required, created_at, updated_at
+SELECT guild_id, require_member, afk_timeout_seconds, drop_if_left_seconds, voice_required,
+       COALESCE(cooldown_after_loss_seconds,120), created_at, updated_at
   FROM guild_policies
  WHERE guild_id = $1
 `, guildID).Scan(
-		&p.GuildID, &p.RequireMember, &p.AFKTimeoutSeconds, &p.DropIfLeftMinutes, &p.VoiceRequired, &p.CreatedAt, &p.UpdatedAt,
+		&p.GuildID, &p.RequireMember, &p.AFKTimeoutSeconds, &p.DropIfLeftSeconds, &p.VoiceRequired,
+		&p.CooldownAfterLossSeconds, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		// crea default
-		_, err := r.db.ExecContext(ctx, `
-INSERT INTO guild_policies (guild_id) VALUES ($1)
-`, guildID)
+		_, err := r.db.ExecContext(ctx, `INSERT INTO guild_policies (guild_id) VALUES ($1)`, guildID)
 		if err != nil {
 			return GuildPolicy{}, err
 		}
@@ -54,9 +53,9 @@ func (r *PolicyRepo) Update(ctx context.Context, guildID string, u GuildPolicyUp
 		args = append(args, *u.AFKTimeoutSeconds)
 		i++
 	}
-	if u.DropIfLeftMinutes != nil {
-		sets = append(sets, fmt.Sprintf("drop_if_left_minutes = $%d", i))
-		args = append(args, *u.DropIfLeftMinutes)
+	if u.DropIfLeftSeconds != nil {
+		sets = append(sets, fmt.Sprintf("drop_if_left_seconds = $%d", i))
+		args = append(args, *u.DropIfLeftSeconds)
 		i++
 	}
 	if len(sets) == 0 {
@@ -81,16 +80,17 @@ UPDATE guild_policies
 
 func (r *PolicyRepo) Upsert(ctx context.Context, p GuildPolicy) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO guild_policies
-  (guild_id, require_member, afk_timeout_seconds, drop_if_left_minutes, voice_required, created_at, updated_at)
-VALUES
-  ($1, $2, $3, $4, $5, NOW(), NOW())
+INSERT INTO guild_policies (
+  guild_id, require_member, afk_timeout_seconds, drop_if_left_seconds, voice_required,
+  cooldown_after_loss_seconds, created_at, updated_at
+) VALUES ($1,$2,$3,$4,$5,$6, now(), now())
 ON CONFLICT (guild_id) DO UPDATE SET
-  require_member        = EXCLUDED.require_member,
-  afk_timeout_seconds   = EXCLUDED.afk_timeout_seconds,
-  drop_if_left_minutes  = EXCLUDED.drop_if_left_minutes,
-  voice_required        = EXCLUDED.voice_required,
-  updated_at            = NOW()
-`, p.GuildID, p.RequireMember, p.AFKTimeoutSeconds, p.DropIfLeftMinutes, p.VoiceRequired)
+  require_member = EXCLUDED.require_member,
+  afk_timeout_seconds = EXCLUDED.afk_timeout_seconds,
+  drop_if_left_seconds = EXCLUDED.drop_if_left_seconds,
+  voice_required = EXCLUDED.voice_required,
+  cooldown_after_loss_seconds = EXCLUDED.cooldown_after_loss_seconds,
+  updated_at = now()
+`, p.GuildID, p.RequireMember, p.AFKTimeoutSeconds, p.DropIfLeftSeconds, p.VoiceRequired, p.CooldownAfterLossSeconds)
 	return err
 }

@@ -10,6 +10,26 @@ type playerDTO struct {
 	} `json:"games"`
 }
 
+type hubMatchListDTO struct {
+	Items []struct {
+		MatchID string `json:"match_id"`
+		Teams   []struct {
+			Players []struct {
+				UserID   string `json:"user_id"`
+				Nickname string `json:"nickname"`
+			} `json:"players"`
+		} `json:"teams"`
+	} `json:"items"`
+}
+
+type playerHistoryDTO struct {
+	Items []struct {
+		MatchID    string `json:"match_id"`
+		Result     string `json:"result"`      // "win" | "lose"/"defeat" (según API)
+		FinishedAt int64  `json:"finished_at"` // segundos UNIX (si la API usa ms, ajustamos en el codigo)
+	} `json:"items"`
+}
+
 type playerHubsDTO struct {
 	Items []struct {
 		HubID string `json:"hub_id"`

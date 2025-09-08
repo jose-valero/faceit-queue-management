@@ -2,7 +2,18 @@ package discord
 
 import "github.com/bwmarrin/discordgo"
 
+var adminPerms int64 = discordgo.PermissionAdministrator
+
 var Commands = []*discordgo.ApplicationCommand{
+	{
+		Name: "FACEIT: Ver perfil",
+		Type: discordgo.UserApplicationCommand,
+	},
+	{
+		Name:                     "queueui",
+		Description:              "Publica o reposta la UI de la cola en este canal",
+		DefaultMemberPermissions: &adminPerms,
+	},
 	{
 		Name:        "fcplayer",
 		Description: "FACEIT: busca a jugador por nickname",
@@ -41,8 +52,9 @@ var Commands = []*discordgo.ApplicationCommand{
 		},
 	},
 	{
-		Name:        "policy",
-		Description: "Ver o cambiar reglas de la cola (admins)",
+		Name:                     "policy",
+		Description:              "Ver o cambiar reglas de la cola (admins)",
+		DefaultMemberPermissions: &adminPerms,
 		Options: []*discordgo.ApplicationCommandOption{
 			{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "show", Description: "Ver configuración"},
 			{
@@ -52,8 +64,9 @@ var Commands = []*discordgo.ApplicationCommand{
 				Options: []*discordgo.ApplicationCommandOption{
 					{Type: discordgo.ApplicationCommandOptionBoolean, Name: "require_member", Description: "Requerir membresía del hub"},
 					{Type: discordgo.ApplicationCommandOptionBoolean, Name: "voice_required", Description: "Requerir estar en voz"},
-					{Type: discordgo.ApplicationCommandOptionInteger, Name: "afk_timeout_seconds", Description: "AFK timeout en segundos"},
-					{Type: discordgo.ApplicationCommandOptionInteger, Name: "drop_if_left_minutes", Description: "Drop si deja el server (minutos)"},
+					{Type: discordgo.ApplicationCommandOptionInteger, Name: "afk_timeout_seconds", Description: "AFK timeout (segundos)"},
+					{Type: discordgo.ApplicationCommandOptionInteger, Name: "drop_if_left_seconds", Description: "Drop si deja el server (segundos)"},
+					{Type: discordgo.ApplicationCommandOptionInteger, Name: "cooldown_after_loss_seconds", Description: "Cooldown tras derrota (segundos)"},
 				},
 			},
 		},

@@ -13,19 +13,19 @@ type QueueEntry struct {
 }
 
 type GuildPolicy struct {
-	GuildID           string
-	RequireMember     bool
-	AFKTimeoutSeconds int
-	DropIfLeftMinutes int
-	VoiceRequired     bool
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	GuildID                  string
+	RequireMember            bool
+	AFKTimeoutSeconds        int
+	DropIfLeftSeconds        int
+	VoiceRequired            bool
+	CooldownAfterLossSeconds int
+	CreatedAt, UpdatedAt     time.Time
 }
 
 // Para updates parciales desde /policy set
 type GuildPolicyUpdate struct {
 	RequireMember     *bool
 	AFKTimeoutSeconds *int
-	DropIfLeftMinutes *int
+	DropIfLeftSeconds *int
 	VoiceRequired     *bool
 }
