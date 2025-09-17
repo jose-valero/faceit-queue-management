@@ -55,7 +55,6 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		payload = p
 	}
 
-	// ——— Membresía hub (tu lógica actual) ———
 	playerID := ""
 	if payload != nil {
 		if s, ok := payload["user_id"].(string); ok {

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,8 +21,51 @@ import (
 	"github.com/jose-valero/faceit-queue-bot/internal/infra/config"
 	"github.com/jose-valero/faceit-queue-bot/internal/infra/storage"
 
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func startWebhookListener(ctx context.Context, dsn string, onEvent func(id int64, typ string, payload string)) error {
+	go func() {
+		for {
+			conn, err := pgx.Connect(ctx, dsn)
+			if err != nil {
+				log.Printf("listen connect: %v", err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			defer conn.Close(ctx)
+
+			if _, err := conn.Exec(ctx, "LISTEN faceit_webhook"); err != nil {
+				log.Printf("listen exec: %v", err)
+				_ = conn.Close(ctx)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			log.Println("👂 listening on channel faceit_webhook")
+
+			for {
+				n, err := conn.WaitForNotification(ctx)
+				if err != nil {
+					log.Printf("listen wait: %v", err)
+					_ = conn.Close(ctx)
+					break // reconectar
+				}
+				id, _ := strconv.ParseInt(n.Payload, 10, 64)
+				var typ, payload string
+				// leemos el evento
+				if err := conn.QueryRow(ctx,
+					"SELECT type, payload::text FROM webhook_events WHERE id=$1", id,
+				).Scan(&typ, &payload); err != nil {
+					log.Printf("listen fetch %d: %v", id, err)
+					continue
+				}
+				onEvent(id, typ, payload)
+			}
+		}
+	}()
+	return nil
+}
 
 func main() {
 	_ = godotenv.Load()
@@ -39,6 +83,20 @@ func main() {
 		log.Fatal("migrate:", err)
 	}
 	log.Println("✅ DB lista y migrada")
+
+	// justo después de "✅ DB lista y migrada"
+	_ = startWebhookListener(context.Background(), cfg.DatabaseURL, func(id int64, typ, payload string) {
+		log.Printf("[WEBHOOK] id=%d type=%s payload=%s", id, typ, payload)
+
+		// (opcional) si querés disparar lógica:
+		switch typ {
+		case "match_object_created", "match_status_configuring", "match_status_ready", "match_demo_ready", "match_status_finished", "match_status_cancelled", "match_status_aborted":
+			// ejemplo muy simple: podrías parsear payload y llamar roomsSvc.HandleMatchEvent
+			// aquí lo dejamos en log para validar visualmente
+		case "hub_user_role_added", "hub_user_role_removed":
+			// por ahora solo log
+		}
+	})
 
 	// Repos
 	usersRepo := storage.NewUserRepo(db)
