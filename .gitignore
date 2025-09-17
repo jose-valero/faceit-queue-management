@@ -1,1 +1,22 @@
+
+
 /devops/infra/credentials
+# Go
+/bin/
+/dist/
+/build/
+/vendor/
+*.exe
+*.test
+*.out
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# Env/secretos
+.env
+.env.*
+proyect-tree.txt
+.gitignore

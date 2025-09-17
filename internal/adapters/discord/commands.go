@@ -6,10 +6,6 @@ var adminPerms int64 = discordgo.PermissionAdministrator
 
 var Commands = []*discordgo.ApplicationCommand{
 	{
-		Name: "FACEIT: Ver perfil",
-		Type: discordgo.UserApplicationCommand,
-	},
-	{
 		Name:                     "queueui",
 		Description:              "Publica o reposta la UI de la cola en este canal",
 		DefaultMemberPermissions: &adminPerms,

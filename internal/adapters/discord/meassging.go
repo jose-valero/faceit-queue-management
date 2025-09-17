@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"errors"
 	"log"
 
 	"github.com/bwmarrin/discordgo"
@@ -42,18 +43,20 @@ func ReplyEphemeral(s *discordgo.Session, ic *discordgo.InteractionCreate, conte
 		// AllowedMentions: &discordgo.AllowedMentions{},
 	})
 
-	// 2) Si falla con "Unknown Webhook" (10015), intentamos primer response efímero
-	//    (pasa cuando no hicimos DeferEphemeral antes).
-	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
-			Flags:   discordgo.MessageFlagsEphemeral,
-			Embeds:  embeds,
-		},
-	})
-
 	if err != nil {
+		// Fallback sólo si todavía no hay respuesta (webhook desconocido)
+		var reqErr *discordgo.RESTError
+		if errors.As(err, &reqErr) && reqErr.Message != nil && reqErr.Message.Code == 10015 {
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: content,
+					Flags:   discordgo.MessageFlagsEphemeral,
+					Embeds:  embeds,
+				},
+			})
+			return
+		}
 		log.Printf("ReplyEphemeral error: %v", err)
 	}
 }

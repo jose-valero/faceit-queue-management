@@ -20,6 +20,20 @@ type QueueItemRich struct {
 	LastSeenAt    time.Time
 }
 
+type Notifier interface {
+	// Opcional: si lo seteas, podés mandar un DM o mensaje en canal
+	Notify(guildID, discordUserID, msg string)
+}
+
+type QueueService struct {
+	users    UserRepo
+	queue    QueueRepo
+	policy   PolicyRepo
+	fc       FaceitAPI
+	hubID    string
+	notifier Notifier
+}
+
 func (s *QueueService) ListRich(ctx context.Context, guildID string, limit int) ([]QueueItemRich, error) {
 	base, err := s.queue.List(ctx, guildID, limit)
 	if err != nil {
@@ -48,59 +62,86 @@ func (s *QueueService) ListRich(ctx context.Context, guildID string, limit int) 
 	return out, nil
 }
 
-type QueueService struct {
-	users  UserRepo
-	queue  QueueRepo
-	policy PolicyRepo
-	fc     FaceitAPI
-	hubID  string
-}
-
 func NewQueueService(fc FaceitAPI, users UserRepo, queue QueueRepo, policy PolicyRepo, hubID string) *QueueService {
 	return &QueueService{fc: fc, users: users, queue: queue, policy: policy, hubID: hubID}
 }
 
 func (s *QueueService) Join(ctx context.Context, guildID, discordID string) (string, error) {
-	// valida vinculacion
+	// 1) Link debe existir (DB local, rápido)
 	ul, err := s.users.GetByDiscordID(ctx, discordID)
 	if err != nil {
 		return "❌ No estás vinculado. Usa `/link nick:<tu_nick_FACEIT>`", nil
 	}
 
-	if ok, err := s.fc.PlayerInOngoingHub(ctx, ul.FaceitUserID, s.hubID); err == nil && ok {
-		return "⛔ No puedes unirte: estás en una **partida activa del hub**.", nil
+	// 2) Escribir en cola YA (no bloqueamos por redes externas)
+	already, _ := s.queue.Exists(ctx, guildID, discordID)
+	if err := s.queue.Join(ctx, storage.QueueEntry{
+		GuildID:       guildID,
+		DiscordUserID: discordID,
+		FaceitUserID:  ul.FaceitUserID,
+		Nickname:      ul.Nickname,
+		Status:        "waiting",
+	}); err != nil {
+		return "", err
 	}
 
-	// 2) Cooldown de 2 minutos si su último match fue derrota
-	if lost, endedAt, err := s.fc.LastMatchLossWithin(ctx, ul.FaceitUserID, "cs2", 2*time.Minute); err == nil && lost {
-		wait := time.Until(endedAt.Add(2 * time.Minute))
+	// 3) Disparar validación en background (no bloquea UX)
+	go s.validateJoinAsync(guildID, ul)
+
+	// 4) Responder rápido
+	if already {
+		return fmt.Sprintf("🟡 Ya estabas en la cola, actualicé tu estado: **%s**.", ul.Nickname), nil
+	}
+	return fmt.Sprintf("✅ %s te uniste a la cola. (validando requisitos…)", ul.Nickname), nil
+}
+
+// --- validación asíncrona post-join ---
+func (s *QueueService) validateJoinAsync(guildID string, ul storage.UserLink) {
+	// límites agresivos: no queremos bloquear nada largo en background
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// policy (si falla, usa defaults)
+	pol, _ := s.policy.Get(ctx, guildID)
+	cd := time.Duration(pol.CooldownAfterLossSeconds) * time.Second
+	if cd <= 0 {
+		cd = 2 * time.Minute
+	}
+
+	// 1) match en curso en el hub → fuera
+	if ok, err := s.fc.PlayerInOngoingHub(ctx, ul.FaceitUserID, s.hubID); err == nil && ok {
+		// _ = s.queue.Leave(context.Background(), guildID, ul.DiscordUserID)
+		s.notify(guildID, ul.DiscordUserID, "⛔ No puedes unirte: estás en una **partida activa del hub**.")
+		return
+	}
+
+	// 2) cooldown por última derrota → fuera si no cumplió
+	if lost, endedAt, err := s.fc.LastMatchLossWithin(ctx, ul.FaceitUserID, "cs2", cd); err == nil && lost {
+		wait := time.Until(endedAt.Add(cd))
 		if wait > 0 {
-			return fmt.Sprintf("⌛ Acabas de **perder** una partida. Debes esperar **%d segundos** para unirte.", int(wait.Seconds())), nil
+			// _ = s.queue.Leave(context.Background(), guildID, ul.DiscordUserID)
+			s.notify(guildID, ul.DiscordUserID,
+				fmt.Sprintf("⌛ Acabas de **perder** una partida. Debes esperar **%d s** para unirte.", int(wait.Seconds())))
+			return
 		}
 	}
 
-	// valida policy
-	pol, _ := s.policy.Get(ctx, guildID)
-
-	// revalidacion on-demand si se exige membresía
+	// 3) membresía si la policy lo exige (refresca snapshots si está “stale”)
 	if pol.RequireMember {
 		stale := ul.MemberCheckedAt == nil || time.Since(*ul.MemberCheckedAt) > 10*time.Minute
 		if stale {
 			if ok, err := s.fc.IsMemberOfHub(ctx, ul.FaceitUserID, s.hubID); err == nil {
 				now := time.Now()
-
-				// refresco de snapshots si estan nulos o viejos
 				var eloPtr, skillPtr *int
+				// snapshots si están nulos o vencidos (>24h)
 				snapStale := ul.EloSnapshot == nil || ul.SkillLevelSnapshot == nil ||
 					(ul.MemberCheckedAt != nil && time.Since(*ul.MemberCheckedAt) > 24*time.Hour)
-
 				if snapStale {
 					if p, e2 := s.fc.GetPlayerByNickname(ctx, ul.Nickname, "cs2"); e2 == nil {
 						elo, skill := p.Elo, p.Skill
 						eloPtr, skillPtr = &elo, &skill
 					}
 				}
-
 				_ = s.users.UpsertLink(ctx, storage.UserLink{
 					FaceitUserID:       ul.FaceitUserID,
 					DiscordUserID:      ul.DiscordUserID,
@@ -122,43 +163,19 @@ func (s *QueueService) Join(ctx context.Context, guildID, discordID string) (str
 			}
 		}
 		if !ul.IsMember {
-			return "❌ Debes ser **miembro del Club** en FACEIT para unirte a la cola.", nil
+			// _ = s.queue.Leave(context.Background(), guildID, ul.DiscordUserID)
+			s.notify(guildID, ul.DiscordUserID, "❌ Debes ser **miembro del Club** en FACEIT para unirte a la cola.")
+			return
 		}
 	}
 
-	if ok, err := s.fc.PlayerInOngoingHub(ctx, ul.FaceitUserID, s.hubID); err == nil && ok {
-		return "⛔ No puedes unirte: estás en una **partida activa del hub**.", nil
-	}
+	// si llegó hasta acá, mantiene su lugar en la cola
+}
 
-	// 2) Cooldown configurable tras derrota
-	cd := time.Duration(pol.CooldownAfterLossSeconds) * time.Second
-	if cd <= 0 {
-		cd = 2 * time.Minute // fallback sano
+func (s *QueueService) notify(guildID, userID, msg string) {
+	if s.notifier != nil {
+		s.notifier.Notify(guildID, userID, msg)
 	}
-	if lost, endedAt, err := s.fc.LastMatchLossWithin(ctx, ul.FaceitUserID, "cs2", cd); err == nil && lost {
-		wait := time.Until(endedAt.Add(cd))
-		if wait > 0 {
-			return fmt.Sprintf("⌛ Acabas de **perder** una partida. Debes esperar **%d s** para unirte.", int(wait.Seconds())), nil
-		}
-	}
-
-	already, _ := s.queue.Exists(ctx, guildID, discordID)
-	// unirse / refrescar last_seen
-	if err := s.queue.Join(ctx, storage.QueueEntry{
-		GuildID:       guildID,
-		DiscordUserID: discordID,
-		FaceitUserID:  ul.FaceitUserID,
-		Nickname:      ul.Nickname,
-		Status:        "waiting",
-	}); err != nil {
-		return "", err
-	}
-
-	if already {
-		return fmt.Sprintf("🟡 Ya estabas en la cola, actualicé tu estado: **%s**.", ul.Nickname), nil
-	}
-
-	return fmt.Sprintf("✅ %s te uniste a la cola.", ul.Nickname), nil
 }
 
 func (s *QueueService) Leave(ctx context.Context, guildID, discordID string) (string, error) {
