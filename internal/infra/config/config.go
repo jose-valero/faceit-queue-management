@@ -34,7 +34,7 @@ func Load() Config {
 		DiscordGuild:  get("DISCORD_GUILD_ID", true),
 		FaceitAPIKey:  get("FACEIT_API_KEY", true),
 		FaceitHubID:   get("FACEIT_HUB_ID", true),
-		WebhookSecret: get("FACEIT_WEBHOOK_SECRET", true),
+		WebhookSecret: get("WEBHOOK_HEADER_VALUE", true),
 		HTTPAddr:      get("HTTP_ADDR", false), // puede quedar vacío
 		// nuevos
 		VoiceCategoryID: get("VOICE_CATEGORY_ID", false),
