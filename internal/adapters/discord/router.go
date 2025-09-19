@@ -17,16 +17,6 @@ type VoiceCfg struct {
 	AFKChannelID      string
 }
 
-// func levelBadge(lvl *int) string {
-// 	if lvl == nil {
-// 		return ""
-// 	}
-// 	if e, ok := FaceitLevelEmoji[*lvl]; ok {
-// 		return e
-// 	}
-// 	return fmt.Sprintf("[Lv %d]", *lvl)
-// }
-
 type Router struct {
 	s       *discordgo.Session
 	guildID string

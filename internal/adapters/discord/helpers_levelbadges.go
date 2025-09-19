@@ -2,14 +2,15 @@ package discord
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-// --- 1) Mapa por defecto con TUS IDs (se usa si no hay ENV) ---
-var defaultLevelEmojiMap = map[int]string{
+// --- 1) Mapa por defecto con IDs del GUILD(se usa si no hay ENV) ---
+var faceitBadgeByLevel = map[int]string{
 	1:  "<:faceitlvl1:1414748660872384633>",
 	2:  "<:faceitlvl2:1414748674361262171>",
 	3:  "<:faceitlvl3:1414748685463457812>",
@@ -87,9 +88,7 @@ func (r *Router) initLevelBadges() {
 	}
 
 	// (b) Default estático (tus IDs)
-	for k, val := range defaultLevelEmojiMap {
-		r.levelEmojis[k] = val
-	}
+	maps.Copy(r.levelEmojis, faceitBadgeByLevel)
 
 	// (c) Intento de autodescubrimiento en el guild: si encuentra, pisa el default
 	g, _ := r.s.State.Guild(r.guildID)

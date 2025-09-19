@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/jose-valero/faceit-queue-bot/internal/app/service"
 )
 
 var reMention = regexp.MustCompile(`<@!?(\d+)>`)
@@ -113,4 +114,50 @@ func subcmdName(ic *discordgo.InteractionCreate) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (r *Router) statusSuffix(it service.QueueItemRich, graceAFK, graceLeft time.Duration) (string, time.Duration) {
+	var nextRefresh time.Duration
+	suf := " (waiting)"
+
+	switch it.Status {
+	case "left":
+		if graceLeft > 0 {
+			until := it.LastSeenAt.Add(graceLeft)
+			remain := time.Until(until)
+			if remain <= 5*time.Second {
+				suf = " (left " + fmtRemain(remain) + ")"
+			} else {
+				suf = fmt.Sprintf(" (left <t:%d:R>)", until.Unix())
+			}
+			if remain > 0 && (nextRefresh == 0 || remain < nextRefresh) {
+				nextRefresh = remain
+			}
+		} else {
+			suf = " (left)"
+		}
+	case "afk":
+		if graceAFK > 0 {
+			until := it.LastSeenAt.Add(graceAFK)
+			remain := time.Until(until)
+			if remain <= 5*time.Second {
+				suf = " (afk " + fmtRemain(remain) + ")"
+			} else {
+				suf = fmt.Sprintf(" (afk <t:%d:R>)", until.Unix())
+			}
+			if remain > 0 && (nextRefresh == 0 || remain < nextRefresh) {
+				nextRefresh = remain
+			}
+		} else {
+			suf = " (afk)"
+		}
+	}
+	return suf, nextRefresh
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

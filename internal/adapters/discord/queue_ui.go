@@ -57,17 +57,17 @@ func (r *Router) refreshQueueUI(guildID string) {
 				em := []*discordgo.MessageEmbed{embed}
 				cc := []discordgo.MessageComponent{comps}
 				tE := time.Now()
-				_, _ = r.s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+				_, editErr := r.s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 					Channel:    ui.QueueChannelID,
 					ID:         ui.QueueMessageID,
 					Embeds:     &em,
 					Components: &cc,
 				})
-				log.Printf("[ui.refresh] edit dur=%s err=%v", time.Since(tE), err)
+				log.Printf("[ui.refresh] edit dur=%s err=%v", time.Since(tE), editErr)
 				dur := time.Since(tE)
-				if err != nil {
+				if editErr != nil {
 					var re *discordgo.RESTError
-					if errors.As(err, &re) && re.Response != nil {
+					if errors.As(editErr, &re) && re.Response != nil {
 						ra := re.Response.Header.Get("Retry-After")
 						rem := re.Response.Header.Get("X-RateLimit-Remaining")
 						bkt := re.Response.Header.Get("X-RateLimit-Bucket")
@@ -103,6 +103,8 @@ func (r *Router) refreshQueueUI(guildID string) {
 // Render del embed + botones, con countdowns
 func (r *Router) renderQueueEmbed(ctx context.Context, guildID string) (*discordgo.MessageEmbed, discordgo.MessageComponent, error) {
 	tPol := time.Now()
+	const groupSize = 5
+	const softGap = "\n\u200B\n" // separador vertical suave entre grupos
 	pol, _ := r.policy.GetPolicy(ctx, guildID)
 	log.Printf("[ui.render] policy dur=%s", time.Since(tPol))
 	graceAFK := time.Duration(pol.AFKTimeoutSeconds) * time.Second
@@ -123,55 +125,50 @@ func (r *Router) renderQueueEmbed(ctx context.Context, guildID string) (*discord
 
 	if len(items) > 0 {
 		var b strings.Builder
-		for i, it := range items {
-			lvl := 0
-			if it.SkillLevel != nil {
-				lvl = *it.SkillLevel
-			}
-			badge := r.levelBadge(lvl)
-			nick := fmt.Sprintf("[%s](%s)", it.Nickname, faceitPlayerURL(it.Nickname))
-			mention := "<@" + it.DiscordUserID + ">"
 
-			suf := " (waiting)"
-			switch it.Status {
-			case "left":
-				if graceLeft > 0 {
-					until := it.LastSeenAt.Add(graceLeft)
-					remain := time.Until(until)
-					if remain <= 5*time.Second {
-						suf = " (left " + fmtRemain(remain) + ")"
-					} else {
-						suf = fmt.Sprintf(" (left <t:%d:R>)", until.Unix())
-					}
-					if remain > 0 && (nextRefresh == 0 || remain < nextRefresh) {
-						nextRefresh = remain
-					}
-				} else {
-					suf = " (left)"
+		for start := 0; start < len(items); start += groupSize {
+			end := min(start+groupSize, len(items))
+			group := items[start:end]
+			groupN := (start / groupSize) + 1
+
+			// Título de grupo
+			fmt.Fprintf(&b, "**Fila #%d**  _( %d–%d )_\n", groupN, start+1, end)
+
+			// Filas del grupo
+			for i := range group {
+				globalIdx := start + i
+				it := group[i]
+
+				// badge + nick + mention + status
+				var lvl int
+				if it.SkillLevel != nil {
+					lvl = *it.SkillLevel
 				}
-			case "afk":
-				if graceAFK > 0 {
-					until := it.LastSeenAt.Add(graceAFK)
-					remain := time.Until(until)
-					if remain <= 5*time.Second {
-						suf = " (afk " + fmtRemain(remain) + ")"
-					} else {
-						suf = fmt.Sprintf(" (afk <t:%d:R>)", until.Unix())
-					}
-					if remain > 0 && (nextRefresh == 0 || remain < nextRefresh) {
-						nextRefresh = remain
-					}
+				fmt.Printf("🧪 lvl%d + name: %s\n", lvl, it.Nickname)
+				badge := r.levelBadge(lvl)
+				nick := fmt.Sprintf("[%s](%s)", it.Nickname, faceitPlayerURL(it.Nickname))
+				mention := "<@" + it.DiscordUserID + ">"
+
+				suf, nref := r.statusSuffix(it, graceAFK, graceLeft)
+				if nref > 0 && (nextRefresh == 0 || nref < nextRefresh) {
+					nextRefresh = nref
+				}
+
+				const sep = "\u2007"
+				if badge != "" {
+					// Ej: "1) <:faceitlvl6:...> **[Nick](url)** — @user (waiting)"
+					fmt.Fprintf(&b, "%d. %s **%s%s** — %s%s\n", globalIdx+1, badge, sep, nick, mention, suf)
 				} else {
-					suf = " (afk)"
+					fmt.Fprintf(&b, "%d. **%s** — %s%s\n", globalIdx+1, nick, mention, suf)
 				}
 			}
 
-			if badge != "" {
-				fmt.Fprintf(&b, "%d) %s %s — %s%s\n", i+1, badge, nick, mention, suf)
-			} else {
-				fmt.Fprintf(&b, "%d) **%s** — %s%s\n", i+1, it.Nickname, mention, suf)
+			// Separación visual entre grupos
+			if end < len(items) {
+				b.WriteString(softGap)
 			}
 		}
+
 		lines = b.String()
 	}
 
