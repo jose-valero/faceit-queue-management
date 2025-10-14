@@ -2,11 +2,12 @@ package discord
 
 import (
 	"fmt"
-	"maps"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 // --- 1) Mapa por defecto con IDs del GUILD(se usa si no hay ENV) ---
@@ -77,33 +78,35 @@ func parseLevelFromEmojiName(name string) (int, bool) {
 func (r *Router) initLevelBadges() {
 	r.levelEmojis = make(map[int]string, 12)
 
-	// (a) ENV override
+	// 1) Intentar SIEMPRE descubrimiento del guild primero
+	if g, _ := r.s.State.Guild(r.guildID); g != nil {
+		for _, e := range g.Emojis {
+			if lvl, ok := parseLevelFromEmojiName(e.Name); ok {
+				r.levelEmojis[lvl] = fmt.Sprintf("<:%s:%s>", e.Name, e.ID)
+			}
+		}
+	} else if g, _ := r.s.Guild(r.guildID); g != nil {
+		_ = r.s.State.GuildAdd(g)
+		for _, e := range g.Emojis {
+			if lvl, ok := parseLevelFromEmojiName(e.Name); ok {
+				r.levelEmojis[lvl] = fmt.Sprintf("<:%s:%s>", e.Name, e.ID)
+			}
+		}
+	}
+
+	// 2) ENV override pisa lo encontrado
 	if v := os.Getenv("FACEIT_LEVEL_EMOJIS"); v != "" {
 		if m := parseEmojiMapEnv(v); len(m) > 0 {
 			for k, val := range m {
 				r.levelEmojis[k] = val
 			}
-			return
 		}
 	}
 
-	// (b) Default estático (tus IDs)
-	maps.Copy(r.levelEmojis, faceitBadgeByLevel)
-
-	// (c) Intento de autodescubrimiento en el guild: si encuentra, pisa el default
-	g, _ := r.s.State.Guild(r.guildID)
-	if g == nil {
-		g, _ = r.s.Guild(r.guildID)
-		if g != nil {
-			_ = r.s.State.GuildAdd(g)
-		}
-	}
-	if g == nil {
-		return
-	}
-	for _, e := range g.Emojis {
-		if lvl, ok := parseLevelFromEmojiName(e.Name); ok {
-			r.levelEmojis[lvl] = fmt.Sprintf("<:%s:%s>", e.Name, e.ID)
+	// 3) Si faltan niveles, recién ahí completá con Unicode (NO con IDs estáticos)
+	for i := 1; i <= 10; i++ {
+		if _, ok := r.levelEmojis[i]; !ok {
+			r.levelEmojis[i] = "" // que luego caiga al fallback Unicode en levelBadge
 		}
 	}
 }
@@ -143,4 +146,19 @@ func (r *Router) levelBadge(level int) string {
 	default:
 		return ""
 	}
+}
+
+func (r *Router) onGuildEmojisUpdate(_ *discordgo.Session, e *discordgo.GuildEmojisUpdate) {
+	if e.GuildID != r.guildID {
+		return
+	}
+	// rebuild map
+	tmp := make(map[int]string, 12)
+	for _, em := range e.Emojis {
+		if lvl, ok := parseLevelFromEmojiName(em.Name); ok {
+			tmp[lvl] = fmt.Sprintf("<:%s:%s>", em.Name, em.ID)
+		}
+	}
+	r.levelEmojis = tmp
+	r.refreshQueueUI(r.guildID)
 }

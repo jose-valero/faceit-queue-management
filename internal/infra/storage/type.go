@@ -3,13 +3,14 @@ package storage
 import "time"
 
 type QueueEntry struct {
-	GuildID       string
-	DiscordUserID string
-	FaceitUserID  string
-	Nickname      string
-	JoinedAt      time.Time
-	LastSeenAt    time.Time
-	Status        string // waiting | afk | left
+	GuildID            string
+	DiscordUserID      string
+	FaceitUserID       string
+	Nickname           string
+	JoinedAt           time.Time
+	LastSeenAt         time.Time
+	Status             string // waiting | afk | left
+	SkillLevelSnapshot *int
 }
 
 type GuildPolicy struct {

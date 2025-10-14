@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"context"
 	"log"
 	"sync"
 	"time"
@@ -87,6 +88,17 @@ func (r *Router) Handlers() {
 	// Voice events
 	r.s.AddHandler(r.onVoiceStateUpdate) // ↙️ helper en voice_helpers.go
 
-	// refresher de cuenta regresiva
+	// nuevo: se fue del servidor → marcar LEFT (no borrar)
+	r.s.AddHandler(func(_ *discordgo.Session, e *discordgo.GuildMemberRemove) {
+		if e.GuildID != r.guildID {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = r.queue.MarkLeft(ctx, e.GuildID, e.User.ID)
+		go r.refreshQueueUI(e.GuildID)
+	})
+
+	// Refresher de cuenta regresiva (usa debounce interno)
 	go r.runCountdownRefresher() // ↙️ en queue_ui.go
 }

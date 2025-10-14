@@ -140,11 +140,10 @@ func (r *Router) renderQueueEmbed(ctx context.Context, guildID string) (*discord
 				it := group[i]
 
 				// badge + nick + mention + status
-				var lvl int
-				if it.SkillLevel != nil {
-					lvl = *it.SkillLevel
+				lvl := 0
+				if it.SkillLevelSnapshot != nil {
+					lvl = *it.SkillLevelSnapshot
 				}
-				fmt.Printf("🧪 lvl%d + name: %s\n", lvl, it.Nickname)
 				badge := r.levelBadge(lvl)
 				nick := fmt.Sprintf("[%s](%s)", it.Nickname, faceitPlayerURL(it.Nickname))
 				mention := "<@" + it.DiscordUserID + ">"
@@ -216,6 +215,9 @@ func (r *Router) scheduleRefresh(guildID string, d time.Duration) {
 func (r *Router) runCountdownRefresher() {
 	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
+
+	var lastRecon time.Time
+
 	for range t.C {
 		// ¿Tenemos UI publicada para este guild?
 		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
@@ -223,6 +225,14 @@ func (r *Router) runCountdownRefresher() {
 		cancel()
 		if err != nil || ui.QueueChannelID == "" || ui.QueueMessageID == "" {
 			continue
+		}
+
+		if time.Since(lastRecon) >= 5*time.Second {
+			if changed := r.reconcileWaitingStatuses(r.guildID); changed {
+				// si hubo cambios de estado, re-render (usa debounce)
+				r.refreshQueueUI(r.guildID)
+			}
+			lastRecon = time.Now()
 		}
 
 		// leer policy
@@ -261,4 +271,68 @@ func (r *Router) runCountdownRefresher() {
 			r.refreshQueueUI(r.guildID) // usa el debounce (120ms)
 		}
 	}
+}
+
+// Recorre los 'waiting' y ajusta estado a 'afk' o 'left' según voz/policy.
+// Devuelve true si cambió algo.
+func (r *Router) reconcileWaitingStatuses(guildID string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// List() ya trae solo 'waiting'
+	items, err := r.queue.List(ctx, guildID, 200)
+	if err != nil || len(items) == 0 {
+		return false
+	}
+
+	// policy una sola vez
+	pol, _ := r.policy.GetPolicy(ctx, guildID)
+	changed := false
+
+	for _, it := range items {
+		vs, _ := r.s.State.VoiceState(guildID, it.DiscordUserID)
+
+		// 1) No está en voz
+		if vs == nil || vs.ChannelID == "" {
+			// si requerís voz: se marca LEFT (queda visible por gracia LEFT, luego prune)
+			if pol.VoiceRequired {
+				if err := r.queue.MarkLeft(ctx, guildID, it.DiscordUserID); err == nil {
+					changed = true
+				}
+			}
+			// si NO requerís voz, lo dejamos en waiting (no tocar)
+			continue
+		}
+
+		// 2) Está en AFK
+		if r.voice.AFKChannelID != "" && vs.ChannelID == r.voice.AFKChannelID {
+			if err := r.queue.MarkAFK(ctx, guildID, it.DiscordUserID); err == nil {
+				changed = true
+			}
+			continue
+		}
+
+		// 3) Está en voz, ¿pero en categoría permitida?
+		if r.voice.AllowedCategoryID != "" {
+			ch, err := r.safeGetChannel(vs.ChannelID)
+			if err != nil {
+				// si no pudimos leer el canal, no toques estado
+				continue
+			}
+			if ch.ParentID != r.voice.AllowedCategoryID {
+				// si requerís voz válida: LEFT
+				if pol.VoiceRequired {
+					if err := r.queue.MarkLeft(ctx, guildID, it.DiscordUserID); err == nil {
+						changed = true
+					}
+				}
+				continue
+			}
+		}
+
+		// 4) Voz válida → refrescá 'waiting' (last_seen_at)
+		_ = r.queue.TouchValid(ctx, guildID, it.DiscordUserID)
+	}
+
+	return changed
 }

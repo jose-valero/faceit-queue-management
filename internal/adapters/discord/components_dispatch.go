@@ -3,7 +3,6 @@ package discord
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -21,8 +20,6 @@ func (r *Router) handleMessageComponent(s *discordgo.Session, ic *discordgo.Inte
 	switch data.CustomID {
 
 	case "queue_join":
-		stop := step("component.queue_join.total")
-		defer stop()
 		if !r.clickLimiter.Allow(ic.Member.User.ID) {
 			ReplyEphemeral(s, ic, "⏳ Esperá un segundo…")
 			return
@@ -34,15 +31,11 @@ func (r *Router) handleMessageComponent(s *discordgo.Session, ic *discordgo.Inte
 				return
 			}
 		}
-		t := time.Now()
 		msg, err := r.queue.Join(ctx, ic.GuildID, ic.Member.User.ID)
-		log.Printf("[trace M] queue.Join dur=%s err=%v", time.Since(t), err)
 		if err != nil {
 			msg = "⚠️ No se pudo unir a la cola: " + err.Error()
 		}
 		ReplyEphemeral(r.s, ic, msg)
-		defer step("queue.join")()
-		defer step("ui.fast")()
 		go r.refreshQueueUI(ic.GuildID)
 
 	case "queue_leave":
