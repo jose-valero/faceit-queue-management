@@ -8,22 +8,15 @@ output "cluster_arn" {
   value       = aws_ecs_cluster.main.arn
 }
 
-output "vpc_id" {
-  description = "ID of the VPC"
-  value       = aws_vpc.main.id
-}
 
-output "subnet_ids" {
-  description = "IDs of the public subnets"
-  value       = aws_subnet.public[*].id
-}
 
 output "ecr_repository_url" {
   description = "ECR repository URL for Docker images"
   value       = aws_ecr_repository.app.repository_url
 }
 
-output "db_volume_id" {
-  description = "ID of the EBS volume for database"
-  value       = aws_ebs_volume.db_data.id
+output "ecr_postgres_repository_url" {
+  description = "ECR repository URL for Postgres image"
+  value       = aws_ecr_repository.postgres.repository_url
 }
+

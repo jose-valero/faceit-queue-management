@@ -8,7 +8,7 @@ ECR_REPO="506636091874.dkr.ecr.us-east-1.amazonaws.com/dev-faceit-cluster-app"
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o app ./cmd/bot
 
 # Login to ECR
-aws ecr get-login-password --region us-east-1 --profile cpx-valero | docker login --username AWS --password-stdin $ECR_REPO
+aws ecr.tf get-login-password --region us-east-1 --profile cpx-valero | docker login --username AWS --password-stdin $ECR_REPO
 
 # Build Docker image using ECS Dockerfile
 docker build -f Dockerfile-ecs -t $ECR_REPO:$COMMIT_HASH .

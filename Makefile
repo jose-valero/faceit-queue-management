@@ -1,34 +1,31 @@
 ARCH=amd64
-ECR_REPO=faceit-bot
-ECR_DB_REPO=postgres
+ECR_REPO=dev-faceit-cluster-app
+ECR_DB_REPO=dev-faceit-cluster-postgres
 REGION=us-east-1
 ACCOUNT_ID?=506636091874
-IMAGE_TAG?=v0.1.0
-POSTGRES_VERSION?=18.0
+IMAGE_TAG?=$(shell git rev-parse --short HEAD)
+POSTGRES_VERSION?=17.6-alpine
 
 bot-build:
 	./build.sh
 
 bot-image: bot-build
-	AWS_PROFILE=cpx-valero docker build -t $(ECR_REPO):$(IMAGE_TAG) .
+	$(eval IMAGE_TAG=$(shell git rev-parse --short HEAD))
+	AWS_PROFILE=cpx-valero docker build -t $(ECR_REPO):$(IMAGE_TAG) -t $(ECR_REPO):latest .
 ecr-login:
 	AWS_PROFILE=cpx-valero  aws ecr get-login-password --region $(REGION) \
 	| docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
 
-ecr-create:
-	aws ecr create-repository --repository-name $(ECR_REPO) --region $(REGION) || true
-
-ecr-db-create:
-	aws ecr create-repository --repository-name $(ECR_DB_REPO) --region $(REGION) || true
-
 db-image:
-	AWS_PROFILE=cpx-valero  docker build --build-arg POSTGRES_VERSION=$(POSTGRES_VERSION) -f Dockerfile.postgres -t $(ECR_DB_REPO):$(POSTGRES_VERSION) .
+	AWS_PROFILE=cpx-valero  docker build --build-arg POSTGRES_VERSION=$(POSTGRES_VERSION) -f Dockerfile-postgres -t $(ECR_DB_REPO):$(POSTGRES_VERSION) .
 
-bot-push: ecr-login ecr-create
+bot-push: ecr-login
 	AWS_PROFILE=cpx-valero  docker tag $(ECR_REPO):$(IMAGE_TAG) $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(ECR_REPO):$(IMAGE_TAG)
-	AWS_PROFILE=cpx-valero  ocker push $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(ECR_REPO):$(IMAGE_TAG)
+	AWS_PROFILE=cpx-valero  docker tag $(ECR_REPO):latest $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(ECR_REPO):latest
+	AWS_PROFILE=cpx-valero  docker push $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(ECR_REPO):$(IMAGE_TAG)
+	AWS_PROFILE=cpx-valero  docker push $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(ECR_REPO):latest
 
-db-push: ecr-login ecr-db-create
+db-push: ecr-login
 	AWS_PROFILE=cpx-valero  docker tag $(ECR_DB_REPO):$(POSTGRES_VERSION) $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(ECR_DB_REPO):$(POSTGRES_VERSION)
 	AWS_PROFILE=cpx-valero  docker push $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(ECR_DB_REPO):$(POSTGRES_VERSION)
 

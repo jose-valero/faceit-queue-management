@@ -4,3 +4,4 @@ USER app
 WORKDIR /home/app
 COPY dist/bot/bot /usr/local/bin/bot
 ENTRYPOINT ["bot"]
+EXPOSE 8080

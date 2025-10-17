@@ -1,0 +1,7 @@
+ARG POSTGRES_VERSION=17.6-alpine
+FROM postgres:${POSTGRES_VERSION}
+
+EXPOSE 5432
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+  CMD pg_isready -U ${POSTGRES_USER:-postgres} || exit 1
