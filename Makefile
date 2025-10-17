@@ -38,3 +38,6 @@ build-janitor:
 	rm -rf dist/janitor && mkdir -p dist/janitor
 	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 go build -C ./cmd/janitor -o ../../dist/janitor/bootstrap .
 	cd dist/janitor && zip -r function.zip bootstrap
+
+bot-deploy: bot-image bot-push
+	AWS_PROFILE=cpx-valero go run update-ecs.go
