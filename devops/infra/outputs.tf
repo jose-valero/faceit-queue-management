@@ -22,3 +22,8 @@ output "ecr_repository_url" {
   description = "ECR repository URL for Docker images"
   value       = aws_ecr_repository.app.repository_url
 }
+
+output "db_volume_id" {
+  description = "ID of the EBS volume for database"
+  value       = aws_ebs_volume.db_data.id
+}

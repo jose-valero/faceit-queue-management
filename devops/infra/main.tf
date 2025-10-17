@@ -95,9 +95,40 @@ resource "aws_iam_role_policy_attachment" "ecs_instance_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
 }
 
+resource "aws_iam_role_policy" "ebs_attach" {
+  name = "${var.cluster_name}-ebs-attach"
+  role = aws_iam_role.ecs_instance_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:AttachVolume",
+          "ec2:DetachVolume",
+          "ec2:DescribeVolumes"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "ecs_instance_profile" {
   name = "${var.cluster_name}-ecs-instance-profile"
   role = aws_iam_role.ecs_instance_role.name
+}
+
+resource "aws_ebs_volume" "db_data" {
+  availability_zone = data.aws_availability_zones.available.names[0]
+  size              = var.db_volume_size
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name = "${var.cluster_name}-db-data"
+  }
 }
 
 resource "aws_launch_template" "ecs_launch_template" {
@@ -114,6 +145,25 @@ resource "aws_launch_template" "ecs_launch_template" {
   user_data = base64encode(<<-EOF
               #!/bin/bash
               echo ECS_CLUSTER=${aws_ecs_cluster.main.name} >> /etc/ecs/ecs.config
+              
+              # Attach and mount EBS volume
+              INSTANCE_ID=$(ec2-metadata --instance-id | cut -d " " -f 2)
+              VOLUME_ID=${aws_ebs_volume.db_data.id}
+              aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region ${var.aws_region}
+              
+              # Wait for volume
+              while [ ! -e /dev/xvdf ]; do sleep 1; done
+              
+              # Format if new (check for filesystem)
+              if ! blkid /dev/xvdf; then
+                mkfs -t ext4 /dev/xvdf
+              fi
+              
+              # Mount
+              mkdir -p /mnt/db-data
+              mount /dev/xvdf /mnt/db-data
+              mkdir -p /mnt/db-data/postgres
+              chmod 777 /mnt/db-data/postgres
               EOF
   )
 
@@ -208,18 +258,57 @@ resource "aws_ecs_task_definition" "main" {
   cpu                      = "256"
   memory                   = "256"
 
+  volume {
+    name      = "db-data"
+    host_path = "/mnt/db-data/postgres"
+  }
+
   container_definitions = jsonencode([
     {
       name      = "app"
       image     = "${aws_ecr_repository.app.repository_url}:latest"
-      cpu       = 256
-      memory    = 256
+      cpu       = 128
+      memory    = 128
       essential = true
       portMappings = [
         {
           containerPort = 80
           hostPort      = 80
           protocol      = "tcp"
+        }
+      ]
+    },
+    {
+      name      = "postgres"
+      image     = "${var.account_id}.dkr.ecr.${var.region}.amazonaws.com/postgres:18.0"
+      cpu       = 128
+      memory    = 128
+      essential = true
+      portMappings = [
+        {
+          containerPort = 5432
+          hostPort      = 5432
+          protocol      = "tcp"
+        }
+      ]
+      mountPoints = [
+        {
+          sourceVolume  = "db-data"
+          containerPath = "/var/lib/postgresql/data"
+        }
+      ]
+      environment = [
+        {
+          name  = "POSTGRES_DB"
+          value = "faceit"
+        },
+        {
+          name  = "POSTGRES_USER"
+          value = var.postgres_user
+        },
+        {
+          name  = "POSTGRES_PASSWORD"
+          value = var.postgres_password
         }
       ]
     }

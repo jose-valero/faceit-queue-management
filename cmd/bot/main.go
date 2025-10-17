@@ -16,7 +16,7 @@ import (
 
 	discordrouter "github.com/jose-valero/faceit-queue-bot/internal/adapters/discord"
 	"github.com/jose-valero/faceit-queue-bot/internal/adapters/faceit"
-	httpfaceit "github.com/jose-valero/faceit-queue-bot/internal/adapters/httpfaceit"
+	"github.com/jose-valero/faceit-queue-bot/internal/adapters/httpfaceit"
 	"github.com/jose-valero/faceit-queue-bot/internal/app/service"
 	"github.com/jose-valero/faceit-queue-bot/internal/infra/config"
 	"github.com/jose-valero/faceit-queue-bot/internal/infra/storage"
