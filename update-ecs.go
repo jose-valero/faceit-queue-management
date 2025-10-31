@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 )
@@ -61,6 +62,15 @@ func main() {
 	newTaskDef := fmt.Sprintf("%s:%d", *register.TaskDefinition.Family, register.TaskDefinition.Revision)
 	fmt.Printf("Registered new task definition: %s\n", newTaskDef)
 
+	list, err := client.ListTasks(context.Background(), &ecs.ListTasksInput{
+		Cluster:     aws.String("ECS-faceit-infra"),
+		ServiceName: aws.String("faceit-bot"),
+	})
+
+	if err != nil {
+		log.Fatal("error listing tasks", err)
+	}
+
 	fmt.Printf("Updating ECS service...\n")
 	_, err = client.UpdateService(context.TODO(), &ecs.UpdateServiceInput{
 		Cluster:        stringPtr("ECS-faceit-infra"),
@@ -69,6 +79,17 @@ func main() {
 	})
 	if err != nil {
 		log.Fatal("Failed to update ECS service:", err)
+	}
+
+	for _, task := range list.TaskArns {
+		fmt.Printf("Stopping task: %s\n", task)
+		_, err = client.StopTask(context.TODO(), &ecs.StopTaskInput{
+			Cluster: aws.String("ECS-faceit-infra"),
+			Task:    aws.String(task),
+		})
+		if err != nil {
+			log.Fatal("Failed to stop task:", err)
+		}
 	}
 
 	fmt.Println("ECS service updated successfully")
